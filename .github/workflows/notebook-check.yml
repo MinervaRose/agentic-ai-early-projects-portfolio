@@ -1,0 +1,16 @@
+name: Repository Check
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Success message
+        run: echo "GitHub Actions is working."
