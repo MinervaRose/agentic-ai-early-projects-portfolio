@@ -15,6 +15,7 @@
 ![OpenAI](https://img.shields.io/badge/OpenAI-LLM_Applications-red?style=for-the-badge)
 ![Udacity](https://img.shields.io/badge/Udacity-Agentic_AI_Nanodegree-teal?style=for-the-badge)
 
+![Workflow](https://github.com/MinervaRose/agentic-ai-early-projects-portfolio/actions/workflows/notebook-check.yml/badge.svg)
 </div>
 
 ---
