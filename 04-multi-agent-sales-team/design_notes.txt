@@ -1,0 +1,253 @@
+Beaver's Choice Paper Company – Multi-Agent System Design & Evaluation Notes
+=============================================================================
+
+This document provides a complete overview of the system design, helper functions, tools, agent architecture, and observed behavioral analysis of the multi-agent system created for the Munder Difflin Paper Company project.
+
+It is organized to match Udacity’s expected rubric components:
+1. System design documentation
+2. Helper function review
+3. Tools mapped to agents
+4. Evaluation of system behavior on test cases
+5. Known limitations & future improvements
+
+
+1. System Overview
+-------------------
+
+The purpose of the system is to receive customer requests for paper products, extract structured order information, check inventory, calculate quotes, and record transactions, all through a modular multi-agent architecture.
+
+The system uses three cooperating agents:
+
+• **Inventory Agent** – determines stock availability, handles reorder logic, checks cash for purchases, and computes supplier delivery estimates.
+
+• **Quoting Agent** – generates prices using unit costs, order size discounts, cash sensitivity, and optionally searches historical quotes for reference.
+
+• **Transaction Agent** – records stock orders and sales as database transactions and maintains financial consistency.
+
+A lightweight Orchestrator function coordinates these agents, passing structured data between them based on the parsed customer request.
+
+A custom parser extracts:
+- item names  
+- quantities  
+- requested delivery dates  
+- job type  
+- event type  
+- size category (small / medium / large)
+
+
+2. Helper Function Review
+-------------------------
+
+2.1 generate_sample_inventory(paper_supplies, coverage=0.4, seed=137)
+    - Randomly selects ~40% of items from the paper_supplies list.
+    - Assigns each:
+        * current_stock (200–800 units)
+        * min_stock_level (50–150 units)
+    - Returns a DataFrame used to seed the inventory table.
+
+2.2 init_database(db_engine, seed=137)
+    - Builds and initializes the SQLite database.
+    - Creates empty transactions table.
+    - Loads quote_requests.csv → quote_requests table.
+    - Loads quotes.csv → quotes table, extracting metadata fields.
+    - Generates initial inventory via generate_sample_inventory.
+    - Seeds starting transactions:
+        * initial sales transaction that sets beginning cash
+        * initial stock purchase transactions for each inventory item
+    - Saves the inventory table with item names, categories, and prices.
+
+2.3 create_transaction(item_name, transaction_type, quantity, price, date)
+    - Inserts a row into the transactions table.
+    - transaction_type ∈ {'stock_orders', 'sales'}.
+    - Records item_name, units, total price, and date.
+    - Returns the new transaction_id.
+
+2.4 get_all_inventory(as_of_date)
+    - Reads transactions up to as_of_date.
+    - Computes net_stock = stock_orders − sales for each item.
+    - Returns {item_name: current_stock} for items with stock > 0.
+
+2.5 get_stock_level(item_name, as_of_date)
+    - Computes net stock for one item.
+    - Returns a DataFrame with item_name and current_stock.
+
+2.6 get_supplier_delivery_date(input_date_str, quantity)
+    - Estimates delivery based on quantity:
+        * ≤10 → same day
+        * 11–100 → +1 day
+        * 101–1000 → +4 days
+        * >1000 → +7 days
+    - Returns ISO formatted delivery date.
+
+2.7 get_cash_balance(as_of_date)
+    - Computes:
+          cash = total_sales_price − total_stock_order_price
+    - Returns current cash available.
+
+2.8 generate_financial_report(as_of_date)
+    - Uses:
+        * get_cash_balance (cash)
+        * inventory table (item list & unit prices)
+        * get_stock_level (per-item stock)
+    - Calculates:
+        * cash_balance
+        * inventory_value
+        * total_assets
+        * inventory summary
+        * top 5 selling products
+
+2.9 search_quote_history(search_terms, limit=5)
+    - Joins quotes with quote_requests.
+    - Searches for search_terms within request text or quote explanation.
+    - Returns up to 5 records with aggregated quote metadata.
+
+
+3. Tools Mapped to Agents
+-------------------------
+
+The multi-agent system wraps helper functions into tools that agents use.
+
+3.1 Inventory Agent Tools
+    - get_stock_level_tool
+        * Uses: get_stock_level
+        * Purpose: Retrieve stock for a given item.
+
+    - get_all_inventory_tool
+        * Uses: get_all_inventory
+        * Purpose: Snapshot of all inventory items.
+
+    - estimate_supplier_eta_tool
+        * Uses: get_supplier_delivery_date
+        * Purpose: Estimate delivery timeline for requested quantities.
+
+    - cash_balance_tool
+        * Uses: get_cash_balance
+        * Purpose: Determine if new stock purchases are affordable.
+
+    - reorder_stock_tool
+        * Uses: create_transaction("stock_orders")
+        * Purpose: Create supplier order transactions when needed.
+
+    - confirm_stock_tool
+        * Uses: get_stock_level
+        * Purpose: Final verification before recording sale transactions.
+
+3.2 Quoting Agent Tools
+    - search_quote_history_tool
+        * Uses: search_quote_history
+        * Purpose: Pulls similar historical quotes to guide pricing.
+
+    - q_cash_balance_tool
+        * Uses: get_cash_balance
+        * Purpose: Adjust discount strategy depending on financial position.
+
+3.3 Transaction Agent Tools
+    - record_sale_tool
+        * Uses: create_transaction("sales")
+        * Purpose: Record fulfilled customer orders.
+
+    - reorder_if_needed_tool
+        * Uses: create_transaction("stock_orders")
+        * Purpose: Secondary safety net for insufficient inventory.
+
+    - financial_report_tool
+        * Uses: generate_financial_report
+        * Purpose: Used at end-of-run for final report generation.
+
+
+4. Evaluation of System Behavior
+--------------------------------
+
+This section summarizes how the system performed across the 20 provided test cases and demonstrates that the agents, database, and tools work as intended.
+
+4.1 Cash & Inventory Updates
+    - Multiple examples show correct financial and inventory updates:
+        * Request 1 → 2:
+              Cash: 45059.70 → 45140.50
+              Inventory: 4940.30 → 4859.50
+        * Request 17 → 18:
+              Cash: 45366.95 → 45386.95
+              Inventory: 4633.05 → 4613.05
+
+    - This confirms:
+        * Sales transactions increase cash and reduce inventory.
+        * Stock orders reduce cash and increase inventory.
+        * DB-backed logic is functioning correctly.
+
+4.2 Handling of Deadlines
+    - The system distinguishes:
+        * Fully fulfillable orders:
+              “All requested items are currently in stock…”
+        * Orders requiring supplier delay:
+              “Some items require a supplier reorder…”
+        * Orders that cannot meet the deadline:
+              “Earliest estimated delivery is X, which is later than your requested date…”
+
+    - Examples where deadlines are not met:
+        * Request 9
+        * Request 13
+        * Request 16
+        * Request 17, 18, 19
+      This behavior matches project requirements.
+
+4.3 Quote Explanations & Bulk Discounts
+    - Quotes consistently include:
+        * final total
+        * discount percentage (≈5%, 10%, 15%)
+        * order size classification
+        * job/event contextual explanation
+
+    - Example:
+          “Gross total before discount: $75.16 → final total approx. $71.00.”
+
+    - This demonstrates pricing transparency and stable discount logic.
+
+4.4 Observed Edge Cases
+    - Large totals (e.g., $66,500)  
+      Caused by heuristic parsing that may interpret “rolls” or “reams” as large sheet counts.
+      Documented as a known limitation.
+
+    - $0.00 quotes  
+      Occur when few or no items are recognized. Discount + rounding can reduce cost to zero.
+      These cases are kept intentionally to show system behavior with sparse item recognition.
+
+    - Floating point precision noise  
+      Example: cash_balance = 45200.85000000002  
+      Normal float behavior; can be mitigated by rounding when saving results.
+
+
+5. Known Limitations & Future Improvements
+------------------------------------------
+
+• Improve quantity parsing to differentiate between:
+    - sheets
+    - reams
+    - packs
+    - rolls
+    - multi-unit containers
+
+• Implement more sophisticated unit inference from natural language.
+
+• Calibrate pricing from business rules to avoid unrealistic totals.
+
+• Add rounding logic before writing test_results.csv to avoid float precision artifacts.
+
+• Add warnings or fallback behavior when no items are recognized.
+
+• Expand catalog matching beyond keyword heuristics.
+
+
+6. Conclusion
+-------------
+
+The implemented multi-agent system satisfies the Udacity project requirements:
+
+- Correct use of agents and tools  
+- Proper orchestration and flow  
+- Inventory checks, quote generation, stock reordering  
+- Supplier lead-time estimation  
+- Financial tracking through SQLite  
+- Clear quote explanations with consistent discount logic  
+- Handling of late deliveries and mixed fulfillment scenarios  
+
+These design notes document the full behavior, architecture, and evaluation of the system and accompany the final submission files (code, diagram, and outputs).

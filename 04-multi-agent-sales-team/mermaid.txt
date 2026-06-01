@@ -1,0 +1,58 @@
+flowchart TD
+
+  %% Entry point
+  A["Customer Request<br/>job, need_size, event, request_date, request text"] --> ORCH["Orchestrator Agent"]
+
+  %% Orchestrator: extraction & routing
+  ORCH --> EXTRACT["Parse and normalize request<br/>(custom Python function)"]
+  EXTRACT --> PARSED["ParsedRequest JSON<br/>items, quantities, due_date, metadata"]
+
+  %% Matching & validation (internal to Orchestrator)
+  PARSED --> MATCH["Match items to catalog<br/>using paper_supplies"]
+  MATCH --> UNK["If unknown items<br/>mark as unsupported<br/>and build partial or decline response"]
+  MATCH --> BUILD["If all items matched<br/>build Order JSON"]
+
+  %% Branch: if unknown → direct response
+  UNK --> ORCH_RESP["Compose partial or decline response<br/>with explanation"]
+
+  %% Normal path: inventory + quoting + fulfillment
+  BUILD --> INV["Inventory Agent"]
+  BUILD --> QUOTE["Quoting Agent"]
+
+  %% Inventory Agent tools
+  INV --> INV_STOCK["get_stock_level_tool<br/>purpose: current stock for one item<br/>uses: get_stock_level"]
+  INV --> INV_ALL["get_all_inventory_tool<br/>purpose: snapshot of stock across items<br/>uses: get_all_inventory"]
+  INV --> INV_SUPP["estimate_supplier_eta_tool<br/>purpose: supplier delivery date per item<br/>uses: get_supplier_delivery_date"]
+  INV --> INV_CASH["cash_balance_tool<br/>purpose: check cash before reordering<br/>uses: get_cash_balance"]
+  INV --> INV_REORDER["reorder_stock_tool<br/>purpose: create stock_orders transactions<br/>uses: create_transaction"]
+
+  INV --> INV_OUT["InventoryAssessment JSON<br/>stock per item, reorder suggestions, delivery date"]
+
+  %% Quoting Agent tools
+  QUOTE --> Q_HIST["search_quote_history_tool<br/>purpose: retrieve similar past quotes<br/>uses: search_quote_history"]
+  QUOTE --> Q_CASH["q_cash_balance_tool<br/>purpose: adjust discount strategy<br/>uses: get_cash_balance"]
+
+  QUOTE --> QUOTE_OUT["Quote JSON<br/>total, item breakdown, explanation, discount rationale"]
+
+  %% Ordering / Fulfillment Agent
+  INV_OUT --> ORDER["Ordering and Transactions Agent"]
+  QUOTE_OUT --> ORDER
+
+  ORDER --> ORD_STOCK["confirm_stock_tool<br/>purpose: final stock check before sale<br/>uses: get_stock_level"]
+  ORDER --> ORD_SALE["record_sale_tool<br/>purpose: create sales transactions<br/>uses: create_transaction"]
+  ORDER --> ORD_REORDER["reorder_if_needed_tool<br/>purpose: extra stock_orders if needed<br/>uses: create_transaction"]
+  ORDER --> ORD_REPORT["financial_report_tool<br/>purpose: snapshot of financial state<br/>uses: generate_financial_report"]
+
+  ORDER --> TX_OUT["TransactionResult JSON<br/>sale and reorder transaction ids"]
+
+  %% Final response back to customer
+  ORCH --> ORCH_RESP
+  QUOTE_OUT --> ORCH_RESP
+  INV_OUT --> ORCH_RESP
+  TX_OUT --> ORCH_RESP
+
+  ORCH_RESP --> RESULT["Customer-facing response<br/>quote, delivery date, explanation<br/>no internal financial details"]
+
+  %% Styles
+  classDef tool fill:#eef,stroke:#66c,color:#000,stroke-width:1px;
+  class INV_STOCK,INV_ALL,INV_SUPP,INV_CASH,INV_REORDER,Q_HIST,Q_CASH,ORD_STOCK,ORD_SALE,ORD_REORDER,ORD_REPORT tool;
